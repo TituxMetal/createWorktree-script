@@ -1,0 +1,184 @@
+#!/usr/bin/env bash
+
+# Enable strict mode for safer bash scripting
+set -euo pipefail
+
+# Print usage instructions
+printUsage() {
+  echo "Usage: createWorktree <feature-name>" >&2
+  echo "       createWorktree --install" >&2
+}
+
+# Resolve the absolute file path of this script
+resolveScriptPath() {
+  local sourcePath
+  sourcePath="${BASH_SOURCE[0]}"
+
+  if command -v readlink >/dev/null 2>&1; then
+    local resolved
+    resolved="$(readlink -f "${sourcePath}" 2>/dev/null || true)"
+    [ -n "${resolved}" ] && { echo "${resolved}"; return 0; }
+  fi
+
+  if command -v realpath >/dev/null 2>&1; then
+    local resolved
+    resolved="$(realpath "${sourcePath}" 2>/dev/null || true)"
+    [ -n "${resolved}" ] && { echo "${resolved}"; return 0; }
+  fi
+
+  case "${sourcePath}" in
+    /*) echo "${sourcePath}" ;;
+    *) echo "${PWD}/${sourcePath}" ;;
+  esac
+}
+
+# Install this script into ~/bin/createWorktree
+installSelf() {
+  local destinationDir
+  destinationDir="${HOME}/bin"
+
+  local destinationPath
+  destinationPath="${destinationDir}/createWorktree"
+
+  local scriptPath
+  scriptPath="$(resolveScriptPath)"
+
+  mkdir -p "${destinationDir}"
+  cp -f "${scriptPath}" "${destinationPath}"
+  chmod +x "${destinationPath}"
+
+  echo "Installed to: ${destinationPath}"
+  echo "Ensure ${HOME}/bin is in your PATH, or create an alias: alias createWorktree=\"${destinationPath}\""
+}
+
+# Validate and return the feature name
+requireFeatureName() {
+  local name="${1-}"
+  
+  [ -n "${name}" ] && { echo "${name}"; return 0; } || { printUsage; exit 1; }
+}
+
+# Return repository root directory
+getRepoRoot() {
+  local root
+  root="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "Error: Not inside a git repository." >&2; exit 1; }
+
+  echo "${root}"
+}
+
+# Return project name from current directory
+getProjectName() {
+  basename "${PWD}"
+}
+
+# Return the global worktrees root directory
+getWorktreesRoot() {
+  echo "${HOME}/webdev/worktrees"
+}
+
+# Return the project-specific worktrees directory path
+getProjectWorktreesDir() {
+  local projectName="$1"
+  local root
+  root="$(getWorktreesRoot)"
+
+  echo "${root}/${projectName}-worktrees"
+}
+
+# Ensure a directory exists
+ensureDirectory() {
+  local path="$1"
+
+  mkdir -p "${path}"
+}
+
+# Build the full target path for the new worktree
+getTargetPath() {
+  local projectWorktreesDir="$1"
+  local featureName="$2"
+
+  # Replace any slashes in the feature name to avoid nested directories
+  local folderName
+  folderName="${featureName//\//-}"
+
+  echo "${projectWorktreesDir}/${folderName}"
+}
+
+# Exit if the provided path already exists
+failIfPathExists() {
+  local path="$1"
+
+  [ -e "${path}" ] && { echo "Error: Target path already exists: ${path}" >&2; exit 1; } || true
+}
+
+# Fetch remote refs to keep base selection accurate
+fetchRemoteRefs() {
+  local repoRoot="$1"
+
+  git -C "${repoRoot}" fetch --all --prune --quiet || true
+}
+
+# Select the best base reference for the new branch
+chooseBaseRef() {
+  local repoRoot="$1"
+
+  for candidate in \
+    "refs/remotes/origin/main origin/main" \
+    "refs/heads/main main" \
+    "refs/remotes/origin/master origin/master" \
+    "refs/heads/master master"; do
+
+    read -r refpath name <<< "${candidate}"
+    git -C "${repoRoot}" show-ref --verify --quiet "${refpath}" && { echo "${name}"; return 0; }
+    true
+  done
+
+  echo "HEAD"
+}
+
+# Create the worktree; create a branch if missing, otherwise reuse existing
+createWorktree() {
+  local repoRoot="$1"
+  local targetPath="$2"
+  local featureName="$3"
+  local baseRef="$4"
+
+  git -C "${repoRoot}" worktree add -b "${featureName}" "${targetPath}" "${baseRef}" 2>/dev/null || git -C "${repoRoot}" worktree add "${targetPath}" "${featureName}"
+}
+
+# Open the new worktree in Cursor if available
+openInCursor() {
+  local targetPath="$1"
+
+  command -v cursor >/dev/null 2>&1 && { cursor -n "${targetPath}" >/dev/null 2>&1 || cursor "${targetPath}" >/dev/null 2>&1 || true; } || echo "Note: 'cursor' CLI not found in PATH. Open manually: ${targetPath}" >&2
+}
+
+# Main entrypoint
+main() {
+  if [ "${1-}" = "--install" ]; then
+    installSelf
+    return 0
+  fi
+
+  local featureName; featureName="$(requireFeatureName "${1-}")"
+  local repoRoot; repoRoot="$(getRepoRoot)"
+  local projectName; projectName="$(getProjectName)"
+
+  local projectWorktreesDir; projectWorktreesDir="$(getProjectWorktreesDir "${projectName}")"
+  ensureDirectory "${projectWorktreesDir}"
+
+  local targetPath; targetPath="$(getTargetPath "${projectWorktreesDir}" "${featureName}")"
+
+  failIfPathExists "${targetPath}"
+  fetchRemoteRefs "${repoRoot}"
+
+  local baseRef; baseRef="$(chooseBaseRef "${repoRoot}")"
+
+  createWorktree "${repoRoot}" "${targetPath}" "${featureName}" "${baseRef}"
+  openInCursor "${targetPath}"
+
+  echo "Worktree created at: ${targetPath}"
+}
+
+# Execute main with all CLI arguments
+main "$@"
