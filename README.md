@@ -1,6 +1,6 @@
-## createWorktree — Git worktree helper
+# createWorktree — Git worktree helper
 
-### Overview
+## Overview
 
 `createWorktree` is a small Bash utility that streamlines creating Git worktrees for feature
 development. From the root of an existing Git project, it will:
@@ -11,14 +11,14 @@ development. From the root of an existing Git project, it will:
 
 This lets you quickly spin up isolated working directories without copying your entire repository.
 
-### Prerequisites
+## Prerequisites
 
 - **Git**: version with `git worktree` support (Git 2.5+).
 - **Bash**: script uses `bash`, `set -euo pipefail`, and standard POSIX utilities.
 - **Cursor CLI (optional)**: to auto-open the worktree in a new window. If not available, the script
   prints the path to open manually.
 
-### Installation
+## Installation
 
 - Quick install from the project directory:
 
@@ -41,21 +41,37 @@ alias createWorktree="$HOME/bin/createWorktree"
 
 - Reload your shell configuration or start a new terminal session.
 
-### Usage
+## Usage
 
 - From the root of your repository directory (e.g., `~/webdev/labo/myapp`), run:
 
 ```bash
-createWorktree <feature-name>
+createWorktree <feature-name> [OPTIONS]
 ```
 
-- Example:
+- Basic example:
 
 ```bash
 createWorktree feat/login-ui
 ```
 
-### What the script does
+## Automation Features
+
+By default, the script runs full automation for streamlined development. If any automation step
+fails (e.g., missing files or commands), it will inform you and continue with other tasks:
+
+- **Copies `.yarnrc.yml`** configuration from repository root
+- **Installs dependencies** with `yarn install`
+- **Sets up Prisma** using `yarn workspace @app/api prisma generate` and
+  `yarn workspace @app/api prisma db push`
+- **Copies environment files** from `apps/api/.env` and `apps/web/.env`
+
+**Note**: The automation features are designed for yarn workspace monorepos with `apps/api` and
+`apps/web` structure (like [this sample project](https://github.com/TituxMetal/sample-project)). The
+script works fine in any Git repository - automation tasks that don't apply will be skipped
+gracefully.
+
+## What the script does
 
 - **Project name detection**: Uses the base name of `PWD` as `{project-name}`.
 - **Worktrees location**: Creates (if needed) `~/webdev/worktrees/{project-name}-worktrees/`.
@@ -76,13 +92,13 @@ createWorktree feat/login-ui
 - **Opening in Cursor**: Attempts `cursor -n <path>` and falls back to `cursor <path>`. If the
   `cursor` CLI is unavailable, it prints a note and the path.
 
-### Safeguards and idempotency
+## Safeguards and idempotency
 
 - Fails if the target directory already exists to avoid clobbering:
   `~/webdev/worktrees/{project-name}-worktrees/{feature-name}`.
 - Runs `git fetch --all --prune --quiet` to keep remote refs current before choosing a base ref.
 
-### Examples
+## Examples
 
 - New feature branch and worktree from `origin/main` if available:
 
@@ -96,7 +112,19 @@ createWorktree feature/payment-intents
 createWorktree bugfix/issue-1234
 ```
 
-### Error messages and troubleshooting
+- Full automation (default behavior):
+
+```bash
+createWorktree feature/new-dashboard
+```
+
+- Minimal setup when automation not needed:
+
+```bash
+createWorktree hotfix/urgent-fix --no-auto
+```
+
+## Error messages and troubleshooting
 
 - **Error: Not inside a git repository.**
   - Make sure you run the command from inside a Git repo (ideally the repo root).
@@ -107,7 +135,7 @@ createWorktree bugfix/issue-1234
 - **Base branch not found**
   - If your repo doesn’t have `main` or `master`, the script falls back to `HEAD`.
 
-### Removing a worktree
+## Removing a worktree
 
 - To remove a worktree and keep the branch:
 
@@ -121,17 +149,17 @@ git worktree remove /absolute/path/to/worktree
 git branch -D <feature-name>
 ```
 
-### Design notes
+## Design notes
 
 - Uses camelCase function names and guard/short-circuit style (no `if/elif/else` chains).
 - Comments are placed above each line for readability and consistency.
 - Indentation is consistent for code and comments within functions.
 
-### Compatibility
+## Compatibility
 
-- Developed and tested on Linux. Should work on macOS with compatible Git and Bash.
+- Developed and tested on Arch Linux. Should work on macOS with compatible Git and Bash.
 
-### Updating
+## Updating
 
 - Pull latest changes to your Git repository as needed; this script itself is standalone. If you
   adjust behavior (e.g., worktrees root), remember to update this README accordingly.
