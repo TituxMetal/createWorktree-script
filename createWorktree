@@ -5,8 +5,18 @@ set -euo pipefail
 
 # Print usage instructions
 printUsage() {
-  echo "Usage: createWorktree <feature-name>" >&2
+  echo "Usage: createWorktree <feature-name> [OPTIONS]" >&2
   echo "       createWorktree --install" >&2
+  echo "" >&2
+  echo "By default, creates worktree with full automation:" >&2
+  echo "  • Copies .yarnrc.yml configuration" >&2
+  echo "  • Runs yarn install for dependencies" >&2
+  echo "  • Sets up Prisma in apps/api workspace" >&2
+  echo "  • Copies .env files from apps/api and apps/web" >&2
+  echo "" >&2
+  echo "OPTIONS:" >&2
+  echo "  --no-auto        Disable automation features" >&2
+  echo "  --help, -h       Show this help message" >&2
 }
 
 # Resolve the absolute file path of this script
@@ -51,9 +61,45 @@ installSelf() {
   echo "Ensure ${HOME}/bin is in your PATH, or create an alias: alias createWorktree=\"${destinationPath}\""
 }
 
+# Initialize automation flags
+initAutomationFlags() {
+  automationEnabled=true
+}
+
+# Parse command-line arguments and set automation flags
+parseArguments() {
+  featureName=""
+  
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      --no-auto)
+        automationEnabled=false
+        ;;
+      --help|-h)
+        printUsage
+        exit 0
+        ;;
+      --install)
+        installSelf
+        exit 0
+        ;;
+      --*)
+        echo "Error: Unknown option $1" >&2
+        printUsage
+        exit 1
+        ;;
+      *)
+        [ -n "${featureName}" ] && { echo "Error: Multiple feature names provided" >&2; printUsage; exit 1; }
+        featureName="$1"
+        ;;
+    esac
+    shift
+  done
+}
+
 # Validate and return the feature name
 requireFeatureName() {
-  local name="${1-}"
+  local name="$1"
   
   [ -n "${name}" ] && { echo "${name}"; return 0; } || { printUsage; exit 1; }
 }
@@ -146,6 +192,76 @@ createWorktree() {
   git -C "${repoRoot}" worktree add -b "${featureName}" "${targetPath}" "${baseRef}" 2>/dev/null || git -C "${repoRoot}" worktree add "${targetPath}" "${featureName}"
 }
 
+# Print colored status messages
+printStatus() {
+  local message="$1"
+  local color="${2:-32}"
+  
+  printf "\033[${color}m%s\033[0m\n" "${message}" >&2
+}
+
+# Print error messages in red
+printError() {
+  local message="$1"
+  printStatus "Error: ${message}" 31
+}
+
+# Print success messages in green
+printSuccess() {
+  local message="$1"
+  printStatus "✓ ${message}" 32
+}
+
+# Print info messages in blue
+printInfo() {
+  local message="$1"
+  printStatus "ℹ ${message}" 34
+}
+
+# Print warning messages in yellow
+printWarning() {
+  local message="$1"
+  printStatus "⚠ ${message}" 33
+}
+
+# Copy .yarnrc.yml configuration file
+copyYarnConfig() {
+  local repoRoot="$1"
+  local targetPath="$2"
+  
+  cp "${repoRoot}/.yarnrc.yml" "${targetPath}/.yarnrc.yml" 2>/dev/null && printSuccess "Copied .yarnrc.yml configuration" || printWarning "No .yarnrc.yml found, skipping"
+}
+
+# Copy environment files from apps structure
+copyEnvFiles() {
+  local repoRoot="$1"
+  local targetPath="$2"
+  
+  printInfo "Copying environment files from apps/api and apps/web..."
+  
+  cp "${repoRoot}/apps/api/.env" "${targetPath}/apps/api/.env" 2>/dev/null && printSuccess "Copied apps/api/.env" || printWarning "No apps/api/.env found, skipping"
+  cp "${repoRoot}/apps/web/.env" "${targetPath}/apps/web/.env" 2>/dev/null && printSuccess "Copied apps/web/.env" || printWarning "No apps/web/.env found, skipping"
+}
+
+# Install dependencies using yarn
+installDependencies() {
+  local targetPath="$1"
+  
+  printInfo "Installing dependencies with yarn..."
+  
+  cd "${targetPath}" && yarn install >/dev/null 2>&1 && printSuccess "Dependencies installed" || printError "yarn install failed"
+}
+
+# Setup Prisma using yarn workspace
+setupPrisma() {
+  local targetPath="$1"
+  
+  printInfo "Setting up Prisma in @app/api workspace..."
+  
+  cd "${targetPath}" && yarn workspace @app/api prisma generate >/dev/null 2>&1 && printSuccess "Prisma client generated" || printError "Prisma generate failed"
+  cd "${targetPath}" && yarn workspace @app/api prisma db push >/dev/null 2>&1 && printSuccess "Database schema pushed" || printError "Prisma db push failed"
+}
+
 # Open the new worktree in Cursor if available
 openInCursor() {
   local targetPath="$1"
@@ -153,14 +269,24 @@ openInCursor() {
   command -v cursor >/dev/null 2>&1 && { cursor -n "${targetPath}" >/dev/null 2>&1 || cursor "${targetPath}" >/dev/null 2>&1 || true; } || echo "Note: 'cursor' CLI not found in PATH. Open manually: ${targetPath}" >&2
 }
 
+# Run all automation tasks
+runAutomationTasks() {
+  local repoRoot="$1"
+  local targetPath="$2"
+  
+  copyYarnConfig "${repoRoot}" "${targetPath}"
+  copyEnvFiles "${repoRoot}" "${targetPath}"
+  installDependencies "${targetPath}"
+  setupPrisma "${targetPath}"
+}
+
 # Main entrypoint
 main() {
-  if [ "${1-}" = "--install" ]; then
-    installSelf
-    return 0
-  fi
+  initAutomationFlags
+  
+  parseArguments "$@"
 
-  local featureName; featureName="$(requireFeatureName "${1-}")"
+  featureName="$(requireFeatureName "${featureName}")"
   local repoRoot; repoRoot="$(getRepoRoot)"
   local projectName; projectName="$(getProjectName)"
 
@@ -175,9 +301,16 @@ main() {
   local baseRef; baseRef="$(chooseBaseRef "${repoRoot}")"
 
   createWorktree "${repoRoot}" "${targetPath}" "${featureName}" "${baseRef}"
+  
+  printSuccess "Worktree created at: ${targetPath}"
+  
+  [ "${automationEnabled}" = true ] && {
+    printInfo "Running automation tasks..."
+    runAutomationTasks "${repoRoot}" "${targetPath}"
+    printSuccess "Automation completed"
+  }
+  
   openInCursor "${targetPath}"
-
-  echo "Worktree created at: ${targetPath}"
 }
 
 # Execute main with all CLI arguments
